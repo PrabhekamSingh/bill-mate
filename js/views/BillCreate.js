@@ -12,6 +12,7 @@ import { formatINR } from '../utils/currency.js';
 import { formatDate, formatDateISO, todayISO } from '../utils/date.js';
 import { validateForm, rules } from '../utils/validation.js';
 import { db } from '../db/database.js';
+import { exportSingleBillCSV, exportCustomerBillsCSV } from '../utils/export.js';
 
 export class BillCreateView {
   constructor(app, customerId, billId = null) {
@@ -264,6 +265,15 @@ export class BillCreateView {
       this._syncRowFromDOM(row);
       this._updateRowAmount(row);
       this._updateTotalsDisplay();
+      if (this._autoSaveTimer) clearTimeout(this._autoSaveTimer);
+      this._autoSaveTimer = setTimeout(() => this._autoSaveBill(true), 800);
+    });
+
+    tbody.addEventListener('change', (e) => {
+      const row = e.target.closest('tr[data-index]');
+      if (!row) return;
+      this._syncRowFromDOM(row);
+      this._autoSaveBill(true);
     });
 
     tbody.addEventListener('click', (e) => {
@@ -277,6 +287,7 @@ export class BillCreateView {
         this.lineItems.push({ item_id: null, description: '', quantity: 1, unit: 'pcs', rate: 0, gst_rate: 0 });
       }
       this._renderTbody();
+      this._autoSaveBill(true);
     });
   }
 
@@ -447,6 +458,7 @@ export class BillCreateView {
 
               modal.hide(true);
               this._renderTbody();
+              this._autoSaveBill(false);
             } catch (e) {
               console.error('Item parse error', e);
             }
@@ -475,10 +487,65 @@ export class BillCreateView {
   }
 
   _getBillMeta() {
-    const billNumber = this.element?.querySelector('#inp-bill-number')?.value?.trim();
-    const billDate   = this.element?.querySelector('#inp-bill-date')?.value;
-    const notes      = this.element?.querySelector('#inp-notes')?.value || '';
+    let billNumber = this.element?.querySelector('#inp-bill-number')?.value?.trim();
+    let billDate   = this.element?.querySelector('#inp-bill-date')?.value;
+    const notes    = this.element?.querySelector('#inp-notes')?.value || '';
     return { billNumber, billDate, notes };
+  }
+
+  /**
+   * Auto-save bill into SQLite DB & CSV file in data/ directory
+   */
+  _autoSaveBill(silent = true) {
+    this._syncLineItemsFromDOM();
+    let { billNumber, billDate, notes } = this._getBillMeta();
+
+    if (!billNumber) {
+      billNumber = Bill.generateBillNumber(this.customerId);
+      this.billNumber = billNumber;
+      const inpNum = this.element?.querySelector('#inp-bill-number');
+      if (inpNum) inpNum.value = billNumber;
+    }
+
+    if (!billDate) {
+      billDate = todayISO();
+      this.billDate = billDate;
+      const inpDate = this.element?.querySelector('#inp-bill-date');
+      if (inpDate) inpDate.value = billDate;
+    }
+
+    const validItems = this.lineItems.filter(item => item.description && (item.rate > 0 || item.quantity > 0));
+    if (validItems.length === 0) return;
+
+    const billData = {
+      customer_id:   this.customerId,
+      bill_number:   billNumber,
+      bill_date:     billDate,
+      notes:         notes,
+      carry_forward: this.isEdit ? this.carryForward : undefined
+    };
+
+    try {
+      if (this.isEdit && this.billId) {
+        Bill.update(this.billId, { ...billData, carry_forward: this.carryForward, paid: 0 }, validItems);
+        db.save();
+        exportSingleBillCSV(this.billId);
+        exportCustomerBillsCSV(this.customerId);
+        if (!silent) Toast.success('Bill auto-saved as item added');
+      } else {
+        const created = Bill.create(billData, validItems);
+        db.save();
+        if (created && created.id) {
+          this.billId = created.id;
+          this.isEdit = true;
+          exportSingleBillCSV(this.billId);
+          exportCustomerBillsCSV(this.customerId);
+          if (!silent) Toast.success('Bill created & auto-saved');
+        }
+      }
+    } catch (err) {
+      console.warn('[Auto-Save] Error saving bill:', err);
+    }
   }
 
   _handleSave() {
@@ -509,15 +576,22 @@ export class BillCreateView {
     };
 
     try {
-      if (this.isEdit) {
+      let currentBillId = this.billId;
+      if (this.isEdit && this.billId) {
         Bill.update(this.billId, { ...billData, carry_forward: this.carryForward, paid: 0 }, validItems);
         db.save();
-        Toast.success('Bill updated successfully');
       } else {
-        Bill.create(billData, validItems);
+        const created = Bill.create(billData, validItems);
         db.save();
-        Toast.success('Bill created successfully');
+        currentBillId = created.id;
       }
+
+      if (currentBillId) {
+        exportSingleBillCSV(currentBillId);
+        exportCustomerBillsCSV(this.customerId);
+      }
+
+      Toast.success(this.isEdit ? 'Bill updated successfully' : 'Bill created successfully');
       this.app.navigateTo('customer-detail', { customerId: this.customerId });
     } catch (err) {
       console.error('Save bill error:', err);

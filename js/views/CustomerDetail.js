@@ -12,7 +12,7 @@ import { Modal, Toast } from '../components/Modal.js';
 import { formatINR } from '../utils/currency.js';
 import { formatDate, formatDateISO, todayISO } from '../utils/date.js';
 import { validateForm, rules } from '../utils/validation.js';
-import { exportCustomerLedgerCSV } from '../utils/export.js';
+import { exportCustomerLedgerCSV, exportCustomerBillsCSV } from '../utils/export.js';
 
 export class CustomerDetailView {
   constructor(app, customerId) {
@@ -70,6 +70,7 @@ export class CustomerDetailView {
             <button class="btn btn-primary" id="btn-new-bill">+ New Bill</button>
             <button class="btn btn-secondary" id="btn-record-payment">Record Payment</button>
             <button class="btn btn-secondary" id="btn-edit-customer">Edit</button>
+            <button class="btn btn-secondary" id="btn-export-bills">📥 Export Bills CSV</button>
             <button class="btn btn-secondary" id="btn-export-ledger">Export Ledger</button>
             <button class="btn btn-danger" id="btn-delete-customer">Delete</button>
           </div>
@@ -300,6 +301,15 @@ export class CustomerDetailView {
 
     this.element.querySelector('#btn-edit-customer')?.addEventListener('click', () => {
       this._showEditCustomerModal();
+    });
+
+    this.element.querySelector('#btn-export-bills')?.addEventListener('click', () => {
+      try {
+        exportCustomerBillsCSV(this.customerId, true);
+        Toast.success('Customer bills exported & saved to data/ directory');
+      } catch (e) {
+        Toast.error('Export failed: ' + e.message);
+      }
     });
 
     this.element.querySelector('#btn-export-ledger')?.addEventListener('click', () => {

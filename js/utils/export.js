@@ -170,6 +170,7 @@ export function exportPaymentsCSV(payments) {
 export function exportAllCSV() {
   const customers = db.all('SELECT * FROM customers ORDER BY name');
   const items = db.all('SELECT * FROM items ORDER BY customer_id, name');
+  const catalogItems = db.all('SELECT * FROM catalog_items ORDER BY category, name');
   const bills = db.all('SELECT * FROM bills ORDER BY bill_date DESC');
   const payments = db.all('SELECT * FROM payments ORDER BY payment_date DESC');
 
@@ -177,10 +178,13 @@ export function exportAllCSV() {
 
   downloadFile(exportCustomersCSV(customers), `customers_${dateStr}.csv`, 'text/csv');
   downloadFile(exportItemsCSV(items), `items_${dateStr}.csv`, 'text/csv');
+  downloadFile(exportCatalogItemsCSV(catalogItems), `catalog_items_${dateStr}.csv`, 'text/csv');
   downloadFile(exportBillsCSV(bills), `bills_${dateStr}.csv`, 'text/csv');
   downloadFile(exportPaymentsCSV(payments), `payments_${dateStr}.csv`, 'text/csv');
 
-  return { customers: customers.length, items: items.length, bills: bills.length, payments: payments.length };
+  saveCSVToDataDir('data/catalog_items.csv', exportCatalogItemsCSV(catalogItems));
+
+  return { customers: customers.length, items: items.length, catalogItems: catalogItems.length, bills: bills.length, payments: payments.length };
 }
 
 /**
@@ -265,4 +269,133 @@ export function exportCustomerLedgerCSV(customerId) {
   downloadFile(csv, filename, 'text/csv');
 
   return filename;
+}
+
+/**
+ * Save CSV file to data/ directory on backend server
+ */
+export async function saveCSVToDataDir(filepath, csvContent) {
+  try {
+    const res = await fetch('/api/save-csv', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filepath, content: csvContent })
+    });
+    if (res.ok) {
+      console.log(`[CSV] Saved to ${filepath}`);
+      return true;
+    }
+  } catch (e) {
+    console.warn(`[CSV] Could not save to data directory: ${e.message}`);
+  }
+  return false;
+}
+
+/**
+ * Export Catalog Items to CSV string
+ */
+export function exportCatalogItemsCSV(catalogItems) {
+  const columns = [
+    { key: 'id', header: 'ID' },
+    { key: 'name', header: 'Item Name' },
+    { key: 'category', header: 'Category' },
+    { key: 'hsn_code', header: 'HSN Code' },
+    { key: 'unit', header: 'Unit' },
+    { key: 'rate', header: 'Rate' },
+    { key: 'gst_rate', header: 'GST %' },
+    { key: 'stock_quantity', header: 'Stock Quantity' },
+    { key: 'min_stock', header: 'Min Stock' },
+    { key: 'location', header: 'Location' },
+    { key: 'description', header: 'Description' },
+    { key: 'active', header: 'Active' },
+    { key: 'created_at', header: 'Created At' }
+  ];
+  return toCSV(catalogItems, columns);
+}
+
+/**
+ * Download Catalog CSV and save to data/catalog_items.csv
+ */
+export function exportCatalogCSV() {
+  const catalogItems = db.all('SELECT * FROM catalog_items ORDER BY category, name');
+  const csv = exportCatalogItemsCSV(catalogItems);
+  const dateStr = formatDateISO(new Date()).replace(/-/g, '');
+  const filename = `catalog_items_${dateStr}.csv`;
+
+  downloadFile(csv, filename, 'text/csv');
+  saveCSVToDataDir('data/catalog_items.csv', csv);
+
+  return filename;
+}
+
+/**
+ * Export a single bill to CSV and save to data/customer/{bill_id}_{date}_bill.csv
+ */
+export function exportSingleBillCSV(billId) {
+  const bill = db.get('SELECT b.*, c.name as customer_name FROM bills b JOIN customers c ON b.customer_id = c.id WHERE b.id = ?', [billId]);
+  if (!bill) return null;
+
+  const items = db.all('SELECT * FROM bill_items WHERE bill_id = ? ORDER BY id', [billId]);
+
+  const billColumns = [
+    { key: 'id', header: 'Bill ID' },
+    { key: 'bill_number', header: 'Bill Number' },
+    { key: 'customer_name', header: 'Customer Name' },
+    { key: 'customer_id', header: 'Customer ID' },
+    { key: 'bill_date', header: 'Bill Date' },
+    { key: 'subtotal', header: 'Subtotal' },
+    { key: 'gst_total', header: 'GST Total' },
+    { key: 'total', header: 'Total Amount' },
+    { key: 'carry_forward', header: 'Carry Forward' },
+    { key: 'balance', header: 'Outstanding Balance' },
+    { key: 'notes', header: 'Notes' }
+  ];
+
+  const itemColumns = [
+    { key: 'id', header: 'Line Item ID' },
+    { key: 'description', header: 'Description' },
+    { key: 'quantity', header: 'Quantity' },
+    { key: 'rate', header: 'Rate' },
+    { key: 'gst_rate', header: 'GST %' },
+    { key: 'amount', header: 'Subtotal Amount' },
+    { key: 'gst_amount', header: 'GST Amount' }
+  ];
+
+  const billCSV = toCSV([bill], billColumns);
+  const itemsCSV = toCSV(items, itemColumns);
+  const fullCSV = `--- BILL SUMMARY ---\n${billCSV}\n\n--- LINE ITEMS ---\n${itemsCSV}`;
+
+  const dateStr = (bill.bill_date || formatDateISO(new Date())).replace(/-/g, '');
+  const relativePath = `data/customer/${bill.id}_${dateStr}_bill.csv`;
+
+  saveCSVToDataDir(relativePath, fullCSV);
+
+  return { filename: relativePath, content: fullCSV };
+}
+
+/**
+ * Export all bills for a specific customer to CSV and save in data directory
+ */
+export function exportCustomerBillsCSV(customerId, triggerDownload = false) {
+  const customer = db.get('SELECT * FROM customers WHERE id = ?', [customerId]);
+  if (!customer) return null;
+
+  const bills = db.all('SELECT * FROM bills WHERE customer_id = ? ORDER BY bill_date DESC', [customerId]);
+  const csv = exportBillsCSV(bills);
+
+  // Save each individual bill CSV
+  for (const bill of bills) {
+    exportSingleBillCSV(bill.id);
+  }
+
+  // Save summary CSV for customer
+  const summaryPath = `data/customer/customer_${customerId}_all_bills.csv`;
+  saveCSVToDataDir(summaryPath, csv);
+
+  if (triggerDownload) {
+    const filename = `bills_${customer.name.replace(/\s+/g, '_')}_${formatDateISO(new Date()).replace(/-/g, '')}.csv`;
+    downloadFile(csv, filename, 'text/csv');
+  }
+
+  return csv;
 }

@@ -9,6 +9,7 @@ import { Item } from '../models/Item.js';
 import { Customer } from '../models/Customer.js';
 import { Modal, Toast } from '../components/Modal.js';
 import { formatINR } from '../utils/currency.js';
+import { exportCatalogCSV } from '../utils/export.js';
 
 const ALL_CATEGORIES = [
   'Engine & Lubrication',
@@ -392,6 +393,16 @@ export class CatalogView {
         this._render();
       });
     }
+
+    // Export CSV
+    this.element.querySelector('#btn-export-csv')?.addEventListener('click', () => {
+      try {
+        exportCatalogCSV();
+        Toast.success('Catalog items exported & saved to data/ directory');
+      } catch (e) {
+        Toast.error('Export failed: ' + e.message);
+      }
+    });
 
     // Add buttons
     this.element.querySelector('#btn-add-item')?.addEventListener('click', () => this._showCatalogModal());

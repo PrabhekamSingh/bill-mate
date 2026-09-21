@@ -38,6 +38,48 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return 'application/wasm'
         return super().guess_type(path)
 
+    def do_OPTIONS(self):
+        self.send_response(200, "ok")
+        self.end_headers()
+
+    def do_POST(self):
+        if self.path == '/api/save-csv':
+            import json
+            content_length = int(self.headers.get('Content-Length', 0))
+            post_data = self.rfile.read(content_length)
+            try:
+                data = json.loads(post_data.decode('utf-8'))
+                filepath = data.get('filepath', '')
+                content = data.get('content', '')
+
+                # Prevent path traversal outside current workspace directory
+                target_path = Path(filepath).resolve()
+                base_dir = Path(os.getcwd()).resolve()
+
+                if not str(target_path).startswith(str(base_dir)):
+                    self.send_response(400)
+                    self.end_headers()
+                    self.wfile.write(b'{"error": "Invalid path"}')
+                    return
+
+                # Ensure parent directory exists
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(target_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': True, 'filepath': str(target_path)}).encode('utf-8'))
+            except Exception as e:
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
+        else:
+            self.send_response(404)
+            self.end_headers()
+
     def log_message(self, format, *args):
         # Suppress default log messages
         pass

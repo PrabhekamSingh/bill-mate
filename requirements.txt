@@ -1,0 +1,3 @@
+# Python dependencies for Bill Mate application
+# Note: server.py utilizes Python 3 standard libraries (http.server, socketserver, json, pathlib).
+# No external third-party pip packages are required to run server.py.
