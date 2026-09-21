@@ -4,6 +4,7 @@
  */
 
 import { SCHEMA_SQL, SEED_SQL, SCHEMA_VERSION } from './schema.js';
+import { supabaseService } from './supabase.js';
 
 const DB_NAME = 'billing_app_db';
 const DB_STORE = 'sqlite_db';
@@ -199,6 +200,11 @@ class Database {
    */
   save() {
     if (!this.db) return Promise.resolve();
+
+    // Trigger async cloud sync to Supabase if configured
+    if (supabaseService.isConfigured()) {
+      supabaseService.syncAllLocalToSupabase(this).catch(err => console.warn('[Supabase] Sync background error:', err));
+    }
 
     return new Promise((resolve, reject) => {
       const request = indexedDB.open(DB_NAME, 1);
