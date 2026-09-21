@@ -89,11 +89,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
 
     def log_message(self, format, *args):
-        # Print HTTP requests cleanly
+        # Print EVERY HTTP request cleanly with timestamp
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         msg = format % args
-        if not ("GET /js/" in msg or "GET /css/" in msg):
-            print(f"[{timestamp}] [HTTP REQUEST] {msg}")
+        client_ip = self.address_string()
+        print(f"[{timestamp}] [HTTP SERVER LOG] {client_ip} -> {msg}")
 
 def run_server(port=PORT):
     with socketserver.TCPServer(("", port), Handler) as httpd:

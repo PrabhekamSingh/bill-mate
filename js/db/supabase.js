@@ -61,7 +61,21 @@ class SupabaseService {
   }
 
   isConfigured() {
-    return !!(this.client && this.config.url && this.config.key && this.config.enabled);
+    if (!this.client || !this.config.url || !this.config.key || !this.config.enabled) {
+      return false;
+    }
+    const url = (this.config.url || '').toLowerCase();
+    if (url.includes('yourprojectid') || url.includes('example.com') || url.includes('xyzcompany')) {
+      return false;
+    }
+    return true;
+  }
+
+  _withTimeout(promise, ms = 4000) {
+    return Promise.race([
+      promise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Supabase network timeout exceeded (4s)')), ms))
+    ]);
   }
 
   async testConnection() {
@@ -70,7 +84,8 @@ class SupabaseService {
     }
     try {
       const testClient = createClient(this.config.url, this.config.key);
-      const { data, error } = await testClient.from('customers').select('count', { count: 'exact', head: true });
+      const queryPromise = testClient.from('customers').select('count', { count: 'exact', head: true });
+      const { data, error } = await this._withTimeout(queryPromise, 5000);
       if (error && error.code !== 'PGRST116') {
         throw error;
       }
@@ -174,7 +189,8 @@ class SupabaseService {
     console.log('%c📥 [SUPABASE PULL] Fetching cloud tables from Supabase on startup…', 'color:#0284c7;font-weight:bold;');
     for (const table of tables) {
       try {
-        const { data, error } = await this.client.from(table).select('*');
+        const queryPromise = this.client.from(table).select('*');
+        const { data, error } = await this._withTimeout(queryPromise, 4000);
         if (error) {
           if (error.code === '42P01' || error.message?.includes('relation') || error.message?.includes('not find')) {
             console.warn(`[SUPABASE NOTICE] Table '${table}' does not exist in Supabase yet. Run supabase_schema.sql in Supabase SQL Editor.`);

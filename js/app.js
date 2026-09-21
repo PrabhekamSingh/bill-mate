@@ -16,6 +16,40 @@ import { CatalogView } from './views/Catalog.js';
 import { PaymentsView } from './views/Payments.js';
 import { Toast } from './components/Modal.js';
 
+// Global Outbound HTTP Call Logger
+function setupFetchLogging() {
+  if (window._fetchLoggingInstalled) return;
+  window._fetchLoggingInstalled = true;
+
+  const originalFetch = window.fetch;
+  window.fetch = async function (resource, options = {}) {
+    const method = (options.method || 'GET').toUpperCase();
+    const url = typeof resource === 'string' ? resource : (resource ? resource.url : '');
+    const startTime = performance.now();
+    const timestamp = new Date().toLocaleTimeString();
+
+    console.log(`%c🌐 [HTTP CALL REQUEST] ${timestamp} | ${method} ${url}`, 'color:#0284c7;font-weight:bold;');
+
+    try {
+      const response = await originalFetch.apply(this, arguments);
+      const duration = (performance.now() - startTime).toFixed(1);
+      const statusColor = response.ok ? 'color:#16a34a;' : 'color:#dc2626;';
+
+      console.log(
+        `%c🌐 [HTTP CALL RESPONSE] ${method} ${url} -> Status ${response.status} ${response.statusText} (${duration}ms)`,
+        statusColor + 'font-weight:bold;'
+      );
+
+      return response;
+    } catch (error) {
+      const duration = (performance.now() - startTime).toFixed(1);
+      console.error(`❌ [HTTP CALL ERROR] ${method} ${url} -> ${error.message} (${duration}ms)`);
+      throw error;
+    }
+  };
+}
+setupFetchLogging();
+
 class BillingApp {
   constructor() {
     this.currentView = null;
@@ -25,10 +59,8 @@ class BillingApp {
   async init() {
     const overlay = document.getElementById('loading-overlay');
     try {
+      // 1. Initialize local SQLite (sql.js WASM + IndexedDB)
       await db.init();
-
-      // Auto-sync Supabase cloud data on startup if configured
-      await supabaseService.autoSyncOnStartup(db);
 
       console.log('%c🚀 BillMate Application Booted', 'color:#0284c7;font-weight:bold;font-size:14px;');
       console.log('%c💾 Persistence Layers Active:', 'color:#0f766e;font-weight:bold;');
@@ -46,19 +78,22 @@ class BillingApp {
         settings:  new SettingsView(this),
       };
 
-      // Setup nav link clicks
+      // Setup nav link clicks & hash-based routing
       this._setupNav();
-
-      // Setup hash-based routing
       window.addEventListener('hashchange', () => this._handleRoute());
-
-      // Initial route
       this._handleRoute();
 
-      // Hide loading overlay
+      // Hide loading overlay IMMEDIATELY so app opens instantly
       if (overlay) overlay.style.display = 'none';
 
       window.billingApp = this; // for debugging
+
+      // 2. Non-blocking background sync with Supabase Cloud DB
+      if (supabaseService.isConfigured()) {
+        supabaseService.autoSyncOnStartup(db)
+          .then(() => this.refreshCurrentView())
+          .catch(err => console.warn('[Supabase Background Sync]', err.message));
+      }
     } catch (error) {
       console.error('App init failed:', error);
       if (overlay) {
@@ -66,10 +101,16 @@ class BillingApp {
           <div style="text-align:center;color:#dc2626;padding:2rem;">
             <strong>Failed to initialize database</strong><br>
             <small>${error.message}</small><br><br>
-            <small>Make sure you're serving this app via an HTTP server (not file://)</small>
+            <small>Make sure you are serving this app via an HTTP server (e.g. <code>python3 server.py</code>)</small>
           </div>
         `;
       }
+    } finally {
+      // Safety guarantee: Ensure loading overlay is never stuck visible
+      setTimeout(() => {
+        const ov = document.getElementById('loading-overlay');
+        if (ov && ov.style.display !== 'none') ov.style.display = 'none';
+      }, 200);
     }
   }
 
