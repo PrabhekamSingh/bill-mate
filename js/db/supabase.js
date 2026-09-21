@@ -111,6 +111,26 @@ class SupabaseService {
   }
 
   /**
+   * Auto-sync on application startup:
+   * 1. Check table existence
+   * 2. Pull Supabase records into local DB if present
+   * 3. Push local DB records to Supabase if Supabase is empty
+   */
+  async autoSyncOnStartup(db) {
+    if (!this.isConfigured()) {
+      console.log('[SUPABASE STARTUP] Supabase not configured. Running in offline/local mode.');
+      return;
+    }
+
+    try {
+      console.log('%c☁️ [SUPABASE STARTUP] Initializing cloud sync & loading data…', 'color:#0284c7;font-weight:bold;');
+      await this.syncSupabaseToLocal(db);
+    } catch (e) {
+      console.warn('[SUPABASE STARTUP NOTICE]', e.message);
+    }
+  }
+
+  /**
    * Sync all local data tables to Supabase Cloud DB
    */
   async syncAllLocalToSupabase(db) {
@@ -128,11 +148,11 @@ class SupabaseService {
         const { error } = await this.client.from(table).upsert(rows);
         if (error) {
           console.error(`[SUPABASE ERROR] Sync failed for ${table}:`, error.message);
-          throw new Error(`Failed syncing table ${table}: ${error.message}`);
+          throw new Error(`Failed syncing table ${table}: ${error.message}. Ensure supabase_schema.sql has been run.`);
         }
       }
       summary[table] = rows.length;
-      console.log(`   └─ Table '${table}': ${rows.length} records synced`);
+      console.log(`   └─ Table '${table}': ${rows.length} records synced to Supabase`);
     }
 
     console.log('%c✅ [SUPABASE SYNC COMPLETE] All tables in sync with cloud DB', 'color:#16a34a;font-weight:bold;');
@@ -148,27 +168,86 @@ class SupabaseService {
     }
 
     const tables = ['customers', 'items', 'catalog_items', 'bills', 'bill_items', 'payments'];
-    const summary = {};
+    const fetchedData = {};
+    let totalRecords = 0;
 
-    console.log('%c📥 [SUPABASE PULL] Fetching cloud tables from Supabase…', 'color:#0284c7;font-weight:bold;');
+    console.log('%c📥 [SUPABASE PULL] Fetching cloud tables from Supabase on startup…', 'color:#0284c7;font-weight:bold;');
     for (const table of tables) {
-      const { data, error } = await this.client.from(table).select('*');
-      if (error) throw new Error(`Failed fetching ${table} from Supabase: ${error.message}`);
-      summary[table] = data ? data.length : 0;
-      console.log(`   └─ Fetched '${table}': ${summary[table]} records from cloud`);
+      try {
+        const { data, error } = await this.client.from(table).select('*');
+        if (error) {
+          if (error.code === '42P01' || error.message?.includes('relation') || error.message?.includes('not find')) {
+            console.warn(`[SUPABASE NOTICE] Table '${table}' does not exist in Supabase yet. Run supabase_schema.sql in Supabase SQL Editor.`);
+          } else {
+            console.warn(`[SUPABASE NOTICE] Error fetching ${table}:`, error.message);
+          }
+          fetchedData[table] = [];
+        } else {
+          fetchedData[table] = data || [];
+          totalRecords += fetchedData[table].length;
+          console.log(`   └─ Fetched '${table}': ${fetchedData[table].length} records from cloud`);
+        }
+      } catch (e) {
+        console.warn(`[SUPABASE NOTICE] Could not fetch table ${table}:`, e.message);
+        fetchedData[table] = [];
+      }
     }
 
-    // Wrap local DB update in a transaction
-    db.transaction((dbInst) => {
-      dbInst.run('DELETE FROM bill_items');
-      dbInst.run('DELETE FROM payments');
-      dbInst.run('DELETE FROM bills');
-      dbInst.run('DELETE FROM items');
-      dbInst.run('DELETE FROM catalog_items');
-      dbInst.run('DELETE FROM customers');
-    });
+    if (totalRecords > 0) {
+      db.transaction((dbInst) => {
+        // Upsert customers
+        (fetchedData.customers || []).forEach(r => {
+          dbInst.run(
+            `INSERT OR REPLACE INTO customers (id, name, phone, email, address, city, opening_balance, created_at) VALUES (?,?,?,?,?,?,?,?)`,
+            [r.id, r.name, r.phone, r.email, r.address, r.city || null, r.opening_balance || 0, r.created_at]
+          );
+        });
+        // Upsert items
+        (fetchedData.items || []).forEach(r => {
+          dbInst.run(
+            `INSERT OR REPLACE INTO items (id, customer_id, name, unit, rate, gst_rate, category, hsn_code, stock_quantity, min_stock, location, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+            [r.id, r.customer_id, r.name, r.unit, r.rate, r.gst_rate, r.category || '', r.hsn_code || '', r.stock_quantity || 0, r.min_stock || 5, r.location || '', r.created_at]
+          );
+        });
+        // Upsert catalog_items
+        (fetchedData.catalog_items || []).forEach(r => {
+          dbInst.run(
+            `INSERT OR REPLACE INTO catalog_items (id, name, category, unit, rate, gst_rate, hsn_code, description, stock_quantity, min_stock, location, active, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            [r.id, r.name, r.category, r.unit, r.rate, r.gst_rate, r.hsn_code, r.description, r.stock_quantity || 10, r.min_stock || 5, r.location || '', r.active ?? 1, r.created_at]
+          );
+        });
+        // Upsert bills
+        (fetchedData.bills || []).forEach(r => {
+          dbInst.run(
+            `INSERT OR REPLACE INTO bills (id, customer_id, bill_number, bill_date, subtotal, gst_total, total, carry_forward, paid, balance, notes, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+            [r.id, r.customer_id, r.bill_number, r.bill_date, r.subtotal, r.gst_total, r.total, r.carry_forward, r.paid, r.balance, r.notes, r.created_at]
+          );
+        });
+        // Upsert bill_items
+        (fetchedData.bill_items || []).forEach(r => {
+          dbInst.run(
+            `INSERT OR REPLACE INTO bill_items (id, bill_id, item_id, catalog_item_id, description, quantity, unit, rate, gst_rate, amount, gst_amount) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+            [r.id, r.bill_id, r.item_id, r.catalog_item_id, r.description, r.quantity, r.unit, r.rate, r.gst_rate, r.amount, r.gst_amount]
+          );
+        });
+        // Upsert payments
+        (fetchedData.payments || []).forEach(r => {
+          dbInst.run(
+            `INSERT OR REPLACE INTO payments (id, customer_id, bill_id, amount, payment_date, mode, reference, notes, created_at) VALUES (?,?,?,?,?,?,?,?,?)`,
+            [r.id, r.customer_id, r.bill_id, r.amount, r.payment_date, r.mode, r.reference, r.notes, r.created_at]
+          );
+        });
+      });
+      console.log('%c✅ [SUPABASE LOAD COMPLETE] Successfully loaded and merged Supabase cloud data into local DB!', 'color:#16a34a;font-weight:bold;');
+    } else {
+      console.log('[SUPABASE STARTUP] No existing records found in Supabase. Checking if local DB should be pushed to cloud...');
+      const custCount = db.get('SELECT COUNT(*) as c FROM customers')?.c || 0;
+      if (custCount > 0) {
+        await this.syncAllLocalToSupabase(db);
+      }
+    }
 
-    return summary;
+    return fetchedData;
   }
 }
 

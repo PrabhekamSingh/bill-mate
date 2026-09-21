@@ -27,6 +27,9 @@ class BillingApp {
     try {
       await db.init();
 
+      // Auto-sync Supabase cloud data on startup if configured
+      await supabaseService.autoSyncOnStartup(db);
+
       console.log('%c🚀 BillMate Application Booted', 'color:#0284c7;font-weight:bold;font-size:14px;');
       console.log('%c💾 Persistence Layers Active:', 'color:#0f766e;font-weight:bold;');
       console.log('  • SQLite WASM + IndexedDB: ACTIVE');
