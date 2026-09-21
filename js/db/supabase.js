@@ -4,6 +4,7 @@
  */
 
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+import { CONFIG } from '../config.js';
 
 const STORAGE_KEY = 'supabase_config';
 
@@ -19,11 +20,19 @@ class SupabaseService {
   _loadConfig() {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.url || parsed.key) return parsed;
+      }
     } catch (e) {
       console.warn('[Supabase] Failed to load config:', e);
     }
-    return { url: '', key: '', enabled: false };
+    // Fallback to js/config.js
+    return {
+      url: CONFIG.SUPABASE_URL || '',
+      key: CONFIG.SUPABASE_ANON_KEY || '',
+      enabled: CONFIG.SUPABASE_ENABLED ?? false
+    };
   }
 
   saveConfig(url, key, enabled = true) {
@@ -112,17 +121,21 @@ class SupabaseService {
     const tables = ['customers', 'items', 'catalog_items', 'bills', 'bill_items', 'payments'];
     const summary = {};
 
+    console.log('%c☁️ [SUPABASE SYNC] Pushing local DB tables to cloud…', 'color:#0284c7;font-weight:bold;');
     for (const table of tables) {
       const rows = db.all(`SELECT * FROM ${table}`);
       if (rows.length > 0) {
         const { error } = await this.client.from(table).upsert(rows);
         if (error) {
+          console.error(`[SUPABASE ERROR] Sync failed for ${table}:`, error.message);
           throw new Error(`Failed syncing table ${table}: ${error.message}`);
         }
       }
       summary[table] = rows.length;
+      console.log(`   └─ Table '${table}': ${rows.length} records synced`);
     }
 
+    console.log('%c✅ [SUPABASE SYNC COMPLETE] All tables in sync with cloud DB', 'color:#16a34a;font-weight:bold;');
     return summary;
   }
 
@@ -137,10 +150,12 @@ class SupabaseService {
     const tables = ['customers', 'items', 'catalog_items', 'bills', 'bill_items', 'payments'];
     const summary = {};
 
+    console.log('%c📥 [SUPABASE PULL] Fetching cloud tables from Supabase…', 'color:#0284c7;font-weight:bold;');
     for (const table of tables) {
       const { data, error } = await this.client.from(table).select('*');
       if (error) throw new Error(`Failed fetching ${table} from Supabase: ${error.message}`);
       summary[table] = data ? data.length : 0;
+      console.log(`   └─ Fetched '${table}': ${summary[table]} records from cloud`);
     }
 
     // Wrap local DB update in a transaction

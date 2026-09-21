@@ -15,6 +15,8 @@ os.chdir(Path(__file__).parent)
 
 PORT = 8080
 
+import datetime
+
 class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=os.getcwd(), **kwargs)
@@ -43,6 +45,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self):
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if self.path == '/api/save-csv':
             import json
             content_length = int(self.headers.get('Content-Length', 0))
@@ -57,6 +60,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 base_dir = Path(os.getcwd()).resolve()
 
                 if not str(target_path).startswith(str(base_dir)):
+                    print(f"[{timestamp}] [SERVER ERROR] Path traversal blocked: {filepath}")
                     self.send_response(400)
                     self.end_headers()
                     self.wfile.write(b'{"error": "Invalid path"}')
@@ -67,11 +71,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 with open(target_path, 'w', encoding='utf-8') as f:
                     f.write(content)
 
+                rel_path = os.path.relpath(target_path, base_dir)
+                print(f"[{timestamp}] [CSV DISK PERSIST] Saved CSV to {rel_path} ({len(content)} bytes)")
+
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json')
                 self.end_headers()
                 self.wfile.write(json.dumps({'success': True, 'filepath': str(target_path)}).encode('utf-8'))
             except Exception as e:
+                print(f"[{timestamp}] [SERVER ERROR] CSV save failed: {e}")
                 self.send_response(500)
                 self.send_header('Content-Type', 'application/json')
                 self.end_headers()
@@ -81,17 +89,25 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
 
     def log_message(self, format, *args):
-        # Suppress default log messages
-        pass
+        # Print HTTP requests cleanly
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        msg = format % args
+        if not ("GET /js/" in msg or "GET /css/" in msg):
+            print(f"[{timestamp}] [HTTP REQUEST] {msg}")
 
 def run_server(port=PORT):
     with socketserver.TCPServer(("", port), Handler) as httpd:
-        print(f"Serving at http://localhost:{port}")
-        print("Press Ctrl+C to stop")
+        print("=========================================================")
+        print(" 🚀 Bill Mate Backend Server Started Successfully")
+        print(f" 🌐 App URL:           http://localhost:{port}")
+        print(f" 📂 Working Directory: {os.getcwd()}")
+        print(f" 💾 CSV API Endpoint:  http://localhost:{port}/api/save-csv")
+        print("=========================================================")
+        print("Press Ctrl+C to stop the server\n")
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:
-            print("\nServer stopped.")
+            print("\n[SERVER STOPPED] Server shutdown gracefully.")
             httpd.shutdown()
 
 if __name__ == '__main__':

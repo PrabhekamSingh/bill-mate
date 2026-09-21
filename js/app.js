@@ -4,6 +4,7 @@
  */
 
 import { db } from './db/database.js';
+import { supabaseService } from './db/supabase.js';
 import { Dashboard } from './views/Dashboard.js';
 import { CustomersView } from './views/Customers.js';
 import { CustomerDetailView } from './views/CustomerDetail.js';
@@ -25,6 +26,12 @@ class BillingApp {
     const overlay = document.getElementById('loading-overlay');
     try {
       await db.init();
+
+      console.log('%c🚀 BillMate Application Booted', 'color:#0284c7;font-weight:bold;font-size:14px;');
+      console.log('%c💾 Persistence Layers Active:', 'color:#0f766e;font-weight:bold;');
+      console.log('  • SQLite WASM + IndexedDB: ACTIVE');
+      console.log('  • Disk CSV Persistence (data/): ACTIVE');
+      console.log(`  • Supabase Cloud Sync: ${supabaseService.isConfigured() ? '✅ CONNECTED (' + supabaseService.config.url + ')' : '⚠️ NOT CONFIGURED (Running 100% locally)'}`);
 
       // Instantiate stable views (no params needed at construction)
       this._views = {

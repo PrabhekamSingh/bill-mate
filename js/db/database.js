@@ -261,6 +261,8 @@ class Database {
       changes: this.db.getRowsModified(),
       lastInsertRowid: this.db.exec('SELECT last_insert_rowid() as id')[0]?.values[0]?.[0] ?? null
     };
+    const cleanSql = sql.trim().replace(/\s+/g, ' ').slice(0, 80);
+    console.log(`[SQL EXEC] ${cleanSql}${params.length ? ' | Params: ' + JSON.stringify(params) : ''} -> (Modified: ${result.changes})`);
     this.save().catch(err => console.error('[DB] Auto-save error:', err));
     return result;
   }
@@ -290,14 +292,17 @@ class Database {
    */
   transaction(fn) {
     if (!this.db) throw new Error('Database not initialized');
+    console.log('[DB TRANSACTION] BEGIN TRANSACTION');
     this.db.run('BEGIN TRANSACTION');
     try {
       const result = fn(this);
       this.db.run('COMMIT');
+      console.log('[DB TRANSACTION] COMMIT TRANSACTION');
       this.save();
       return result;
     } catch (e) {
       this.db.run('ROLLBACK');
+      console.error('[DB TRANSACTION] ROLLBACK TRANSACTION:', e.message);
       throw e;
     }
   }

@@ -150,6 +150,7 @@ export class Bill {
       );
     }
 
+    console.log(`%c🧾 [BILL CREATED] Bill ID #${billId} (${bill_number}) | Customer ID: ${customer_id} | Total: ₹${total.toFixed(2)}`, 'color:#16a34a;font-weight:bold;');
     return this.getById(billId);
   }
 
@@ -252,6 +253,7 @@ export class Bill {
       );
     }
 
+    console.log(`%c📝 [BILL UPDATED] Bill ID #${id} (${billData.bill_number}) | Total: ₹${total.toFixed(2)}`, 'color:#2563eb;font-weight:bold;');
     return this.getById(id);
   }
 
